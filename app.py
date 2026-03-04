@@ -32,8 +32,10 @@ async def upload(file: UploadFile = File(...)):
 
     output.seek(0)
 
+    csv_content = output.getvalue().encode("utf-8-sig")
+
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
+        io.BytesIO(csv_content),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=output.csv"}
     )
