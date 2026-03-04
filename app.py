@@ -55,7 +55,8 @@ async def upload(file: UploadFile = File(...)):
     # 1️⃣ Feltöltés + konvertálás Google Docs-ra
     file_metadata = {
         'name': 'uploaded.pdf',
-        'mimeType': 'application/vnd.google-apps.document'
+        'mimeType': 'application/vnd.google-apps.document',
+        'parents': ['134uaK8YqQ7x7NM-JTgU_PQk_yq7fQXHH']
     }
 
     media = MediaIoBaseUpload(
