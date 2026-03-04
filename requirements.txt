@@ -1,3 +1,7 @@
 fastapi
 uvicorn
 python-multipart
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
