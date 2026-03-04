@@ -56,7 +56,7 @@ async def upload(file: UploadFile = File(...)):
     file_metadata = {
         'name': 'uploaded.pdf',
         'mimeType': 'application/vnd.google-apps.document',
-        'parents': ['https://drive.google.com/drive/folders/134uaK8YqQ7x7NM-JTgU_PQk_yq7fQXHH?usp=sharing']
+        'parents': ['134uaK8YqQ7x7NM-JTgU_PQk_yq7fQXHH']
     }
 
     media = MediaIoBaseUpload(
