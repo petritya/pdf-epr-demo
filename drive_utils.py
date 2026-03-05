@@ -1,4 +1,4 @@
-import pickle
+import os, base64, pickle
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
