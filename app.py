@@ -1,124 +1,122 @@
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import StreamingResponse, HTMLResponse
+
 import io
-import os
-import pandas as pd
+from openpyxl import Workbook
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaIoBaseUpload
 
-# =========================
-# Google API hitelesítés
-# =========================
+from parser import parse_text
 
-SCOPES = [
-    "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/documents.readonly"
-]
 
-SERVICE_ACCOUNT_FILE = "service_account.json"
+app = FastAPI()
+
+
+# -------------------------
+# Google Drive kapcsolat
+# -------------------------
+
+SCOPES = ['https://www.googleapis.com/auth/drive']
 
 credentials = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE,
+    "service_account.json",
     scopes=SCOPES
 )
 
 drive_service = build("drive", "v3", credentials=credentials)
-docs_service = build("docs", "v1", credentials=credentials)
 
 
-# =========================
-# PDF → Google Docs
-# =========================
+# -------------------------
+# Weboldal
+# -------------------------
 
-def pdf_to_google_doc(pdf_path):
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return """
+    <h2>PDF → EPR Excel demo</h2>
+
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file">
+        <button type="submit">Feltöltés</button>
+    </form>
+    """
+
+
+# -------------------------
+# PDF feldolgozás
+# -------------------------
+
+@app.post("/upload")
+async def upload(file: UploadFile = File(...)):
+
+    content = await file.read()
+
+    pdf_stream = io.BytesIO(content)
 
     file_metadata = {
-        "name": "converted_doc",
+        "name": "temp_doc",
         "mimeType": "application/vnd.google-apps.document"
     }
 
-    media = MediaFileUpload(
-        pdf_path,
-        mimetype="application/pdf"
-    )
+    media = MediaIoBaseUpload(pdf_stream, mimetype="application/pdf")
 
-    file = drive_service.files().create(
+    created_file = drive_service.files().create(
         body=file_metadata,
         media_body=media,
         fields="id"
     ).execute()
 
-    return file.get("id")
+    file_id = created_file["id"]
 
 
-# =========================
-# Google Docs → szöveg
-# =========================
+    # -------------------------
+    # DOC → TXT
+    # -------------------------
 
-def read_google_doc(doc_id):
+    text_bytes = drive_service.files().export(
+        fileId=file_id,
+        mimeType="text/plain"
+    ).execute()
 
-    doc = docs_service.documents().get(documentId=doc_id).execute()
-
-    text = ""
-
-    for content in doc.get("body").get("content"):
-        paragraph = content.get("paragraph")
-
-        if paragraph:
-            for element in paragraph.get("elements"):
-                text_run = element.get("textRun")
-
-                if text_run:
-                    text += text_run.get("content")
-
-    return text
+    text = text_bytes.decode("utf-8")
 
 
-# =========================
-# szöveg → Excel
-# =========================
+    # -------------------------
+    # Google doc törlése
+    # -------------------------
 
-def text_to_excel(text):
-
-    lines = text.split("\n")
-
-    data = []
-
-    for line in lines:
-
-        if line.strip() == "":
-            continue
-
-        parts = line.split()
-
-        data.append({
-            "sor": line,
-            "szavak_szama": len(parts)
-        })
-
-    df = pd.DataFrame(data)
-
-    df.to_excel("eredmeny.xlsx", index=False)
+    drive_service.files().delete(fileId=file_id).execute()
 
 
-# =========================
-# MAIN
-# =========================
+    # -------------------------
+    # parser
+    # -------------------------
 
-if __name__ == "__main__":
+    data = parse_text(text)
 
-    pdf_file = "input.pdf"
 
-    print("PDF feltöltése...")
+    # -------------------------
+    # Excel generálás
+    # -------------------------
 
-    doc_id = pdf_to_google_doc(pdf_file)
+    wb = Workbook()
+    ws = wb.active
 
-    print("Szöveg kiolvasása...")
+    ws.append(["Nev", "Cikkszam", "Brutto_suly"])
 
-    text = read_google_doc(doc_id)
+    for row in data:
+        ws.append(row)
 
-    print("Excel generálása...")
+    output = io.BytesIO()
+    wb.save(output)
 
-    text_to_excel(text)
+    output.seek(0)
 
-    print("Kész: eredmeny.xlsx")
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=output.xlsx"}
+    )
