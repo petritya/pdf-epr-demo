@@ -3,6 +3,9 @@ from fastapi.responses import StreamingResponse, HTMLResponse
 
 import io
 from openpyxl import Workbook
+import os
+import json
+from google.oauth2 import service_account
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -18,11 +21,13 @@ app = FastAPI()
 # Google Drive kapcsolat
 # -------------------------
 
-SCOPES = ['https://www.googleapis.com/auth/drive']
+service_account_info = json.loads(
+    os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+)
 
-credentials = service_account.Credentials.from_service_account_file(
-    "service_account.json",
-    scopes=SCOPES
+credentials = service_account.Credentials.from_service_account_info(
+    service_account_info,
+    scopes=["https://www.googleapis.com/auth/drive"]
 )
 
 drive_service = build("drive", "v3", credentials=credentials)
