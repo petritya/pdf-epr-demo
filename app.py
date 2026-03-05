@@ -1,44 +1,50 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse
+import pdfplumber
 import pandas as pd
 import os
 import uuid
 
 app = FastAPI()
 
-UPLOAD_DIR = "temp"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+TEMP_DIR = "temp"
+os.makedirs(TEMP_DIR, exist_ok=True)
 
 
 @app.get("/")
 def home():
-    return {"status": "API működik"}
+    return {"status": "PDF parser működik"}
 
 
-@app.post("/merge")
-async def merge(files: list[UploadFile] = File(...)):
+@app.post("/parse")
+async def parse_pdf(file: UploadFile = File(...)):
 
-    dfs = []
+    pdf_path = os.path.join(TEMP_DIR, file.filename)
 
-    for file in files:
-        temp_path = os.path.join(UPLOAD_DIR, file.filename)
+    with open(pdf_path, "wb") as f:
+        f.write(await file.read())
 
-        with open(temp_path, "wb") as f:
-            f.write(await file.read())
+    text = ""
 
-        df = pd.read_excel(temp_path)
-        dfs.append(df)
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
 
-        os.remove(temp_path)
+    os.remove(pdf_path)
 
-    merged = pd.concat(dfs, ignore_index=True)
+    rows = []
+    for line in text.split("\n"):
+        if ";" in line:
+            rows.append(line.split(";"))
 
-    output_file = os.path.join(UPLOAD_DIR, f"merged_{uuid.uuid4()}.xlsx")
+    df = pd.DataFrame(rows)
 
-    merged.to_excel(output_file, index=False)
+    output_file = os.path.join(TEMP_DIR, f"output_{uuid.uuid4()}.xlsx")
+
+    df.to_excel(output_file, index=False)
 
     return FileResponse(
         output_file,
-        filename="egyesitett.xlsx",
+        filename="adatok.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
