@@ -7,16 +7,11 @@ from googleapiclient.http import MediaFileUpload
 
 from google.auth.transport.requests import Request
 
-
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 ENV_TOKEN_B64 = "GOOGLE_TOKEN_JSON"
 
 
 def authenticate():
-    """
-    Railway-en a token pickle-elt creds (amit te token.json-ként mentettél),
-    Base64-ként be van rakva a GOOGLE_TOKEN_JSON változóba.
-    """
     token_b64 = os.environ.get(ENV_TOKEN_B64)
     if not token_b64:
         raise RuntimeError(
@@ -33,7 +28,7 @@ def authenticate():
             "Ellenőrizd, hogy a teljes Base64 string be lett-e másolva."
         ) from e
 
-    # Ha lejárt, de van refresh_token, frissítjük futás közben
+    # Lejárt token esetén frissítünk (ha van refresh_token)
     try:
         if getattr(creds, "expired", False) and getattr(creds, "refresh_token", None):
             creds.refresh(Request())
@@ -47,30 +42,20 @@ def authenticate():
 
 
 def pdf_to_google_doc(service, pdf_path: str, doc_name: str = "converted_doc") -> str:
-    """
-    PDF feltöltése és Google Docs formátumba konvertálása.
-    Visszaadja a létrejött doc file_id-t.
-    """
     file_metadata = {
         "name": doc_name,
         "mimeType": "application/vnd.google-apps.document",
     }
-
     media = MediaFileUpload(pdf_path, mimetype="application/pdf")
-
     file = (
         service.files()
         .create(body=file_metadata, media_body=media, fields="id")
         .execute()
     )
-
     return file.get("id")
 
 
 def get_doc_text(service, file_id: str) -> str:
-    """
-    Google Docs export TXT-be.
-    """
     export = (
         service.files()
         .export(fileId=file_id, mimeType="text/plain")
@@ -80,7 +65,4 @@ def get_doc_text(service, file_id: str) -> str:
 
 
 def delete_file(service, file_id: str) -> None:
-    """
-    Törli a Drive-ról a létrehozott Google Doc-ot.
-    """
     service.files().delete(fileId=file_id).execute()
