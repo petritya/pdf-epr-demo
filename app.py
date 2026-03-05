@@ -1,47 +1,49 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse
-import pdfplumber
-import pandas as pd
 import os
 import uuid
+from parser import parse_text
+from drive_utils import authenticate, pdf_to_google_doc, get_doc_text
+from openpyxl import Workbook
 
 app = FastAPI()
 
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-
 @app.get("/")
 def home():
     return {"status": "PDF parser működik"}
 
-
 @app.post("/parse")
 async def parse_pdf(file: UploadFile = File(...)):
-
-    pdf_path = os.path.join(TEMP_DIR, file.filename)
-
+    # PDF mentése lokálisan
+    pdf_path = os.path.join(TEMP_DIR, f"{uuid.uuid4()}_{file.filename}")
     with open(pdf_path, "wb") as f:
         f.write(await file.read())
 
-    text = ""
+    # Google Drive hitelesítés
+    service = authenticate("token.json")
 
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            text += page.extract_text() + "\n"
+    # PDF → Google Docs → TXT
+    doc_id = pdf_to_google_doc(service, pdf_path, doc_name=file.filename)
+    text = get_doc_text(service, doc_id)
 
-    os.remove(pdf_path)
+    # TXT feldolgozás a parserrel
+    data = parse_text(text)
 
-    rows = []
-    for line in text.split("\n"):
-        if ";" in line:
-            rows.append(line.split(";"))
-
-    df = pd.DataFrame(rows)
-
+    # Excel mentés
     output_file = os.path.join(TEMP_DIR, f"output_{uuid.uuid4()}.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Termékek"
+    ws.append(["Nev", "Cikkszam", "Brutto_suly"])
+    for row in data:
+        ws.append(row)
+    wb.save(output_file)
 
-    df.to_excel(output_file, index=False)
+    # Lokális PDF törlése
+    os.remove(pdf_path)
 
     return FileResponse(
         output_file,
