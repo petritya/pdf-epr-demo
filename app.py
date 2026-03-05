@@ -94,10 +94,6 @@ def home():
       <p>
         Tölts fel egy <b>PDF</b> számlát (lengyel beszállító / Auto Partner), és a rendszer:
       </p>
-      <p class="small">
-        1) PDF → Google Docs konverzió (Drive API) • 2) TXT kinyerés • 3) tételek kinyerése (regex) • 4) Excel letöltés
-      </p>
-
       <div class="row">
         <div class="file">
           <input id="pdf" type="file" accept="application/pdf" />
@@ -169,6 +165,12 @@ def home():
 
       URL.revokeObjectURL(url);
       setStatus("ok", "Kész! Az Excel letöltése elindult. ✅");
+      setTimeout(() => {
+          input.value = "";       // fájl kiválasztás törlése
+          clearStatus();          // státusz doboz eltüntetése
+          // opcionális: teljes oldal frissítés (ha ezt akarod)
+          // window.location.reload();
+        }, 1200);
 
     } catch (e) {
       setStatus("err", "❌ " + (e?.message || "Ismeretlen hiba."));
