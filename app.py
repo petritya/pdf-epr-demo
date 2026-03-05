@@ -1,127 +1,44 @@
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import StreamingResponse, HTMLResponse
-
-import io
-from openpyxl import Workbook
+from fastapi.responses import FileResponse
+import pandas as pd
 import os
-import json
-from google.oauth2 import service_account
-
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-
-from parser import parse_text
-
+import uuid
 
 app = FastAPI()
 
-
-# -------------------------
-# Google Drive kapcsolat
-# -------------------------
-
-service_account_info = json.loads(
-    os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-)
-
-credentials = service_account.Credentials.from_service_account_info(
-    service_account_info,
-    scopes=["https://www.googleapis.com/auth/drive"]
-)
-
-drive_service = build("drive", "v3", credentials=credentials)
+UPLOAD_DIR = "temp"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-# -------------------------
-# Weboldal
-# -------------------------
-
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 def home():
-    return """
-    <h2>PDF → EPR Excel demo</h2>
-
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="file">
-        <button type="submit">Feltöltés</button>
-    </form>
-    """
+    return {"status": "API működik"}
 
 
-# -------------------------
-# PDF feldolgozás
-# -------------------------
+@app.post("/merge")
+async def merge(files: list[UploadFile] = File(...)):
 
-@app.post("/upload")
-async def upload(file: UploadFile = File(...)):
+    dfs = []
 
-    content = await file.read()
+    for file in files:
+        temp_path = os.path.join(UPLOAD_DIR, file.filename)
 
-    pdf_stream = io.BytesIO(content)
+        with open(temp_path, "wb") as f:
+            f.write(await file.read())
 
-    file_metadata = {
-        "name": "temp_doc",
-        "mimeType": "application/vnd.google-apps.document"
-    }
+        df = pd.read_excel(temp_path)
+        dfs.append(df)
 
-    media = MediaIoBaseUpload(pdf_stream, mimetype="application/pdf")
+        os.remove(temp_path)
 
-    created_file = drive_service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id"
-    ).execute()
+    merged = pd.concat(dfs, ignore_index=True)
 
-    file_id = created_file["id"]
+    output_file = os.path.join(UPLOAD_DIR, f"merged_{uuid.uuid4()}.xlsx")
 
+    merged.to_excel(output_file, index=False)
 
-    # -------------------------
-    # DOC → TXT
-    # -------------------------
-
-    text_bytes = drive_service.files().export(
-        fileId=file_id,
-        mimeType="text/plain"
-    ).execute()
-
-    text = text_bytes.decode("utf-8")
-
-
-    # -------------------------
-    # Google doc törlése
-    # -------------------------
-
-    drive_service.files().delete(fileId=file_id).execute()
-
-
-    # -------------------------
-    # parser
-    # -------------------------
-
-    data = parse_text(text)
-
-
-    # -------------------------
-    # Excel generálás
-    # -------------------------
-
-    wb = Workbook()
-    ws = wb.active
-
-    ws.append(["Nev", "Cikkszam", "Brutto_suly"])
-
-    for row in data:
-        ws.append(row)
-
-    output = io.BytesIO()
-    wb.save(output)
-
-    output.seek(0)
-
-
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=output.xlsx"}
+    return FileResponse(
+        output_file,
+        filename="egyesitett.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
