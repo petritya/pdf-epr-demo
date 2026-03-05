@@ -23,7 +23,7 @@ async def parse_pdf(file: UploadFile = File(...)):
         f.write(await file.read())
 
     # Google Drive hitelesítés
-    
+    service = authenticate("token.json")
 
     # PDF → Google Docs → TXT
     doc_id = pdf_to_google_doc(service, pdf_path, doc_name=file.filename)
