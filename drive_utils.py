@@ -4,11 +4,10 @@ from googleapiclient.http import MediaFileUpload
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
-def authenticate(token_file="token.json"):
-    """A token.json fájl alapján hitelesít a Google Drive-hoz."""
-    with open(token_file, "rb") as f:
-        creds = pickle.load(f)
-
+def authenticate():
+    token_b64 = os.environ["GOOGLE_TOKEN_JSON"]
+    token_bytes = base64.b64decode(token_b64)
+    creds = pickle.loads(token_bytes)
     service = build("drive", "v3", credentials=creds)
     return service
 
