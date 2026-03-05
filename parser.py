@@ -1,55 +1,40 @@
 import re
 
 
-def _normalize_text(text: str) -> str:
+def normalize_val_glue(text: str) -> str:
     """
-    Google Docs TXT néha összetapaszt két szót/cikkszámot.
-    Pl: ...LAGUVAL574164 -> ...LAGU VAL574164
+    Javítja azokat az eseteket, amikor a Google Docs összetapaszt
+    egy szót a VALxxxxxx cikkszámmal, pl: LAGUVAL574164 -> LAGU VAL574164
     """
-    # szóköz beszúrása, ha egy BETŰ után közvetlenül jön a VAL + 6 szám
-    text = re.sub(r"([A-ZÁÉÍÓÖŐÚÜŰ])(?=VAL\d{6}\b)", r"\1 ", text)
-
-    # whitespace normalizálás
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\r\n|\r", "\n", text)
-
-    return text
+    # Csak akkor szúrunk be szóközt, ha közvetlenül előtte betű van,
+    # és utána pontosan VAL + 6 szám jön.
+    return re.sub(r"([A-ZÁÉÍÓÖŐÚÜŰ])(?=VAL\d{6}\b)", r"\1 ", text)
 
 
 def parse_text(text: str):
-    text = _normalize_text(text)
     results = []
 
-    # Régi logika, csak kicsit rugalmasabb:
-    # NÉV + (szóköz) + CIKKSZÁM + (szóköz) + SZT/szt + ... + ÁR + HUF + 0,xx 0,xx
-    #
-    # FONTOS: itt csak 1 darab "HUF" van az ár után!
+    text = normalize_val_glue(text)
+
+    # EZ AZ EREDETI LOGIKA (csak meghagytuk):
+    # NÉV (bármi) + szóköz + CIKKSZÁM (nem whitespace) + szóköz + SZT/szt + ... HUF + szám(,szám)
     pattern = re.finditer(
-        r"(?P<name>.+?)\s+"
-        r"(?P<code>\S+)\s+"
-        r"(?P<uom>SZT|szt)\s+"
-        r".*?"
-        r"(?P<price>[\d ]+,\d+)\s+HUF\s+"
-        r"(?P<w1>\d+,\d+)\s+(?P<w2>\d+,\d+)",
-        text,
-        flags=re.DOTALL
+        r'(.+?)\s+(\S+)\s+(SZT|szt)\s+.*?HUF\s+([\d,]+)',
+        text
     )
 
-    for m in pattern:
-        nev = m.group("name").strip()
-        cikkszam = m.group("code").strip()
-        ar = m.group("price").strip()
+    for match in pattern:
+        nev = match.group(1).strip()
+        cikkszam = match.group(2).strip()
+        brutto_suly = match.group(4).strip()
 
-        # súlyszám eltávolítása (régi)
-        nev = re.sub(r"^\d+,\d+\s+", "", nev).strip()
+        # súlyszám eltávolítása (eredeti)
+        nev = re.sub(r'^\d+,\d+\s+', '', nev)
 
-        # fejléc kiszűrés (régi)
+        # fejléc kiszűrés (eredeti)
         if "Számla" in nev or "Auto Partner" in nev:
             continue
 
-        # Szépítés: "1 889,00" -> "1889,00"
-        ar = ar.replace(" ", "")
-
-        results.append((nev, cikkszam, ar))
+        results.append((nev, cikkszam, brutto_suly))
 
     return results
