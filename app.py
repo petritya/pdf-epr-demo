@@ -47,28 +47,34 @@ def home():
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
 
-    content = await file.read()
+    import pdfplumber
 
-    if not file.filename.lower().endswith(".pdf"):
-        return {"error": "Csak PDF fájl tölthető fel"}
+    pdf_bytes = await file.read()
 
-    # 1️⃣ Feltöltés + konvertálás Google Docs-ra
-    file_metadata = {
-        'name': 'uploaded.pdf',
-        'mimeType': 'application/vnd.google-apps.document',
-        'parents': ['134uaK8YqQ7x7NM-JTgU_PQk_yq7fQXHH']
-    }
+    text = ""
 
-    media = MediaIoBaseUpload(
-        io.BytesIO(content),
-        mimetype='application/pdf'
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+
+    data = parse_text(text)
+
+    output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM Excelhez
+
+    writer = csv.writer(output, delimiter=';')
+    writer.writerow(["Nev", "Cikkszam", "Brutto_suly"])
+    writer.writerows(data)
+
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=output.csv"}
     )
-
-    uploaded_file = drive_service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields='id'
-    ).execute()
 
     file_id = uploaded_file.get('id')
 
