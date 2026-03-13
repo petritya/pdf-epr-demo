@@ -22,14 +22,13 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    # Egyszerű, beépített HTML (nem kell template motor)
     html = """
 <!doctype html>
 <html lang="hu">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PDF → Excel (Auto Partner számla)</title>
+  <title>PDF számla feldolgozó → Excel</title>
   <style>
     :root { color-scheme: dark; }
     body {
@@ -68,7 +67,6 @@ def home():
       cursor: pointer;
     }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
-    .small { font-size: 12px; opacity: 0.85; }
     .status { margin-top: 12px; padding: 10px 12px; border-radius: 12px; display:none; }
     .status.ok { display:block; background: rgba(45, 212, 191, 0.15); border: 1px solid rgba(45, 212, 191, 0.35); }
     .status.err { display:block; background: rgba(248, 113, 113, 0.12); border: 1px solid rgba(248, 113, 113, 0.35); }
@@ -84,7 +82,6 @@ def home():
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .footer { margin-top: 10px; opacity: 0.7; font-size: 12px; }
-    a { color: #bcb6ff; }
   </style>
 </head>
 <body>
@@ -92,12 +89,13 @@ def home():
     <div class="card">
       <h1>PDF számla feldolgozó → Excel</h1>
       <p>
-        Tölts fel egy <b>PDF</b> számlát (lengyel beszállító / Auto Partner), és a rendszer:
+        Tölts fel egy PDF számlát, és a rendszer elkészíti belőle az Excel fájlt.
       </p>
+
       <div class="row">
         <div class="file">
           <input id="pdf" type="file" accept="application/pdf" />
-          <div class="footer">Tipp: ha nem PDF-et töltesz fel, hibát ad.</div>
+          <div class="footer">Kérlek PDF fájlt tölts fel.</div>
         </div>
         <button id="btn">Feldolgozás & letöltés</button>
       </div>
@@ -113,6 +111,7 @@ def home():
 
   function setStatus(type, text) {
     statusBox.className = "status " + type;
+    statusBox.style.display = "block";
     statusBox.innerHTML = text;
   }
 
@@ -130,24 +129,31 @@ def home():
       setStatus("err", "Kérlek válassz ki egy PDF fájlt.");
       return;
     }
+
     if (file.type !== "application/pdf") {
       setStatus("err", "Ez nem PDF fájlnak tűnik. Kérlek PDF-et tölts fel.");
       return;
     }
 
     btn.disabled = true;
-    setStatus("ok", `<span class="spinner"></span>Feldolgozás folyamatban... (Google Docs → TXT → Excel)`);
+    setStatus("ok", `<span class="spinner"></span>Feldolgozás folyamatban...`);
 
     try {
       const fd = new FormData();
       fd.append("file", file);
 
-      const res = await fetch("/parse", { method: "POST", body: fd });
+      const res = await fetch("/parse", {
+        method: "POST",
+        body: fd
+      });
+
       if (!res.ok) {
         let msg = "Hiba történt a feldolgozás közben.";
         try {
           const j = await res.json();
-          if (j?.detail) msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+          if (j?.detail) {
+            msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+          }
         } catch {}
         throw new Error(msg);
       }
@@ -155,7 +161,6 @@ def home():
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
 
-      // Letöltés indítása
       const a = document.createElement("a");
       a.href = url;
       a.download = "adatok.xlsx";
@@ -164,13 +169,13 @@ def home():
       a.remove();
 
       URL.revokeObjectURL(url);
+
       setStatus("ok", "Kész! Az Excel letöltése elindult. ✅");
+
       setTimeout(() => {
-          input.value = "";       // fájl kiválasztás törlése
-          clearStatus();          // státusz doboz eltüntetése
-          // opcionális: teljes oldal frissítés (ha ezt akarod)
-          // window.location.reload();
-        }, 1200);
+        input.value = "";
+        clearStatus();
+      }, 1200);
 
     } catch (e) {
       setStatus("err", "❌ " + (e?.message || "Ismeretlen hiba."));
@@ -209,12 +214,26 @@ async def parse_pdf(file: UploadFile = File(...)):
             data = parse_text(text)
 
             output_file = os.path.join(TEMP_DIR, f"output_{uuid.uuid4()}.xlsx")
+
             wb = Workbook()
             ws = wb.active
             ws.title = "Termékek"
-            ws.append(["Nev", "Cikkszam", "Brutto_suly"])
+
+            ws.append([
+                "Termeknev",
+                "Cikkszam",
+                "Mennyiseg",
+                "Szallito_orszaga",
+                "Gyarto",
+                "Netto_ar",
+                "Valuta",
+                "Brutto_suly",
+                "Brutto_tomeg"
+            ])
+
             for row in data:
                 ws.append(list(row))
+
             wb.save(output_file)
 
             return FileResponse(
@@ -224,7 +243,6 @@ async def parse_pdf(file: UploadFile = File(...)):
             )
 
         finally:
-            # Ne szemeteljünk a Drive-on
             try:
                 delete_file(service, doc_id)
             except Exception:
