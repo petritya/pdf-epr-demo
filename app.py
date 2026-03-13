@@ -192,40 +192,82 @@ def home():
     return HTMLResponse(html)
 
 
+def parse_hu_number(value):
+    """
+    Magyar formátumú szám szövegből float:
+    '12 345,67' -> 12345.67
+    '0,45' -> 0.45
+    """
+    if value is None:
+        return None
+
+    s = str(value).strip()
+    if not s:
+        return None
+
+    s = s.replace(" ", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return value
+
+
 def format_worksheet(ws):
     """
     Excel formázás:
-    - vastag fejléc
-    - háttérszín fejlécnek
-    - keret minden cellára
-    - automatikus szélesség
-    - Megnevezés oszlop fix szélesség + sortörés
-    - fejléc rögzítés
+    - sötét fejléc
+    - fehér, vastag fejlécszöveg
+    - vastagabb keretek
+    - váltakozó sorszínek
+    - megnevezés oszlop fix szélesség + sortörés
+    - többi oszlop automatikus szélesség
+    - szűrő és fejléc rögzítés
     """
 
-    header_fill = PatternFill(fill_type="solid", fgColor="D9EAF7")
-    header_font = Font(bold=True)
-    thin = Side(border_style="thin", color="BFBFBF")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    # Színek
+    header_fill = PatternFill(fill_type="solid", fgColor="1F4E78")
+    odd_row_fill = PatternFill(fill_type="solid", fgColor="EAF3F8")
+    even_row_fill = PatternFill(fill_type="solid", fgColor="D6EAF4")
+
+    header_font = Font(bold=True, color="FFFFFF")
+    normal_font = Font(color="000000")
+
+    thick_side = Side(border_style="medium", color="7F7F7F")
+    border = Border(
+        left=thick_side,
+        right=thick_side,
+        top=thick_side,
+        bottom=thick_side
+    )
+
+    center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    top_alignment = Alignment(vertical="top")
+    wrap_top_alignment = Alignment(vertical="top", wrap_text=True)
 
     # Fejléc formázása
     for cell in ws[1]:
         cell.font = header_font
         cell.fill = header_fill
         cell.border = border
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = center_alignment
 
-    # Adatsorok formázása
-    for row in ws.iter_rows(min_row=2):
-        for cell in row:
+    # Adatsorok formázása + váltakozó színek
+    for row_idx in range(2, ws.max_row + 1):
+        row_fill = odd_row_fill if row_idx % 2 == 0 else even_row_fill
+
+        for col_idx in range(1, ws.max_column + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.font = normal_font
+            cell.fill = row_fill
             cell.border = border
-            cell.alignment = Alignment(vertical="top")
 
-    # Megnevezés oszlop (A) – fix szélesség, sortöréssel
+            if col_idx == 1:
+                cell.alignment = wrap_top_alignment
+            else:
+                cell.alignment = top_alignment
+
+    # Megnevezés oszlop fix szélesség
     ws.column_dimensions["A"].width = 45
-    for row in ws.iter_rows(min_row=2, min_col=1, max_col=1):
-        for cell in row:
-            cell.alignment = Alignment(wrap_text=True, vertical="top")
 
     # Többi oszlop automatikus szélesség
     for col_idx in range(2, ws.max_column + 1):
@@ -237,17 +279,19 @@ def format_worksheet(ws):
             if len(value) > max_length:
                 max_length = len(value)
 
-        adjusted_width = min(max_length + 2, 25)
+        adjusted_width = min(max_length + 2, 22)
         ws.column_dimensions[col_letter].width = adjusted_width
 
-    # Sorok magassága automatikus hatású legyen hosszú szövegnél
+    # Sorok magassága
     for row_idx in range(2, ws.max_row + 1):
-        ws.row_dimensions[row_idx].height = 30
+        ws.row_dimensions[row_idx].height = 32
+
+    ws.row_dimensions[1].height = 24
 
     # Fejléc rögzítése
     ws.freeze_panes = "A2"
 
-    # Szűrő bekapcsolása
+    # Szűrő
     ws.auto_filter.ref = ws.dimensions
 
 
@@ -293,7 +337,32 @@ async def parse_pdf(file: UploadFile = File(...)):
             ])
 
             for row in data:
-                ws.append(list(row))
+                row = list(row)
+
+                # Számoszlopok konvertálása
+                # indexek:
+                # 0 Terméknév
+                # 1 Cikkszám
+                # 2 Mennyiség
+                # 3 Szállító országa
+                # 4 Gyártó
+                # 5 Nettó ár
+                # 6 Valuta
+                # 7 Bruttó súly
+                # 8 Bruttó tömeg
+                row[2] = parse_hu_number(row[2])
+                row[5] = parse_hu_number(row[5])
+                row[7] = parse_hu_number(row[7])
+                row[8] = parse_hu_number(row[8])
+
+                ws.append(row)
+
+            # Számformátumok
+            for row_idx in range(2, ws.max_row + 1):
+                ws.cell(row=row_idx, column=3).number_format = '0.00'
+                ws.cell(row=row_idx, column=6).number_format = '#,##0.00'
+                ws.cell(row=row_idx, column=8).number_format = '0.00'
+                ws.cell(row=row_idx, column=9).number_format = '0.00'
 
             format_worksheet(ws)
 
