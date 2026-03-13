@@ -5,6 +5,8 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 
 from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+from openpyxl.utils import get_column_letter
 
 from parser import parse_text
 from drive_utils import (
@@ -190,6 +192,65 @@ def home():
     return HTMLResponse(html)
 
 
+def format_worksheet(ws):
+    """
+    Excel formázás:
+    - vastag fejléc
+    - háttérszín fejlécnek
+    - keret minden cellára
+    - automatikus szélesség
+    - Megnevezés oszlop fix szélesség + sortörés
+    - fejléc rögzítés
+    """
+
+    header_fill = PatternFill(fill_type="solid", fgColor="D9EAF7")
+    header_font = Font(bold=True)
+    thin = Side(border_style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # Fejléc formázása
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = border
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    # Adatsorok formázása
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.border = border
+            cell.alignment = Alignment(vertical="top")
+
+    # Megnevezés oszlop (A) – fix szélesség, sortöréssel
+    ws.column_dimensions["A"].width = 45
+    for row in ws.iter_rows(min_row=2, min_col=1, max_col=1):
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    # Többi oszlop automatikus szélesség
+    for col_idx in range(2, ws.max_column + 1):
+        col_letter = get_column_letter(col_idx)
+        max_length = 0
+
+        for cell in ws[col_letter]:
+            value = "" if cell.value is None else str(cell.value)
+            if len(value) > max_length:
+                max_length = len(value)
+
+        adjusted_width = min(max_length + 2, 25)
+        ws.column_dimensions[col_letter].width = adjusted_width
+
+    # Sorok magassága automatikus hatású legyen hosszú szövegnél
+    for row_idx in range(2, ws.max_row + 1):
+        ws.row_dimensions[row_idx].height = 30
+
+    # Fejléc rögzítése
+    ws.freeze_panes = "A2"
+
+    # Szűrő bekapcsolása
+    ws.auto_filter.ref = ws.dimensions
+
+
 @app.post("/parse")
 async def parse_pdf(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
@@ -220,19 +281,21 @@ async def parse_pdf(file: UploadFile = File(...)):
             ws.title = "Termékek"
 
             ws.append([
-                "Termeknev",
-                "Cikkszam",
-                "Mennyiseg",
-                "Szallito_orszaga",
-                "Gyarto",
-                "Netto_ar",
+                "Terméknév",
+                "Cikkszám",
+                "Mennyiség",
+                "Szállító országa",
+                "Gyártó",
+                "Nettó ár",
                 "Valuta",
-                "Brutto_suly",
-                "Brutto_tomeg"
+                "Bruttó súly",
+                "Bruttó tömeg"
             ])
 
             for row in data:
                 ws.append(list(row))
+
+            format_worksheet(ws)
 
             wb.save(output_file)
 
