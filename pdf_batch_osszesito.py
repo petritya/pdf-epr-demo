@@ -26,6 +26,7 @@ BAD_OUTPUT_DIR = "hibas_output"
 TXT_DEBUG_DIR = "txt_debug"
 
 CHECK_FILE = "ellenorzes.xlsx"
+SUMMARY_FILE = "osszesitett_tetelek.xlsx"
 
 TOKEN_FILE = "token.json"
 CLIENT_SECRET_FILE = "client_secret.json"
@@ -471,6 +472,43 @@ def save_check_excel(rows, output_path):
 
     wb.save(output_path)
 
+def save_summary_excel(rows, output_path):
+    grouped = {}
+
+    for row in rows:
+        termeknev = row[3]
+        cikkszam = row[4]
+        mennyiseg = hu_to_float(row[5]) or 0
+
+        key = cikkszam
+
+        if key not in grouped:
+            grouped[key] = {
+                "termeknev": termeknev,
+                "mennyiseg": 0,
+            }
+
+        grouped[key]["mennyiseg"] += mennyiseg
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Osszesitett tetelek"
+
+    ws.append([
+        "Cikkszam",
+        "Termeknev",
+        "Osszes_mennyiseg",
+    ])
+
+    for cikkszam, adat in sorted(grouped.items()):
+        if adat["mennyiseg"] > 0:
+            ws.append([
+                cikkszam,
+                adat["termeknev"],
+                adat["mennyiseg"],
+            ])
+
+    wb.save(output_path)
 
 # -------------------------
 # Fő feldolgozás
@@ -498,6 +536,7 @@ def main():
     service = authenticate()
 
     check_rows = []
+    all_output_rows = []
 
     ok_count = 0
     bad_count = 0
@@ -552,6 +591,7 @@ def main():
                 ok_count += 1
                 statusz = "OK"
                 megjegyzes = ""
+                all_output_rows.extend(output_rows)
             else:
                 excel_path = bad_output_path / excel_name
                 bad_count += 1
@@ -619,6 +659,7 @@ def main():
             if doc_id:
                 delete_file(service, doc_id)
 
+    save_summary_excel(all_output_rows, SUMMARY_FILE)
     save_check_excel(check_rows, CHECK_FILE)
 
     print()
