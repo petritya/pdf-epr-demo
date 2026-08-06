@@ -1,5 +1,7 @@
 import os
 import uuid
+import zipfile
+import shutil
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
@@ -8,7 +10,16 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 
-from parser import parse_text
+from pdf_batch_osszesito import (
+    parse_text,
+    save_summary_excel,
+    parse_invoice_no,
+    parse_invoice_date,
+    parse_total_row,
+    hu_to_float,
+    close_enough,
+)
+
 from drive_utils import (
     authenticate,
     pdf_to_google_doc,
@@ -294,25 +305,165 @@ def format_worksheet(ws):
     # Szűrő
     ws.auto_filter.ref = ws.dimensions
 
+def process_one_pdf(service, pdf_path):
+    pdf_name = os.path.basename(pdf_path)
+    doc_id = None
+
+    try:
+        doc_id = pdf_to_google_doc(
+            service,
+            pdf_path,
+            doc_name=os.path.splitext(pdf_name)[0],
+        )
+
+        text = get_doc_text(service, doc_id)
+
+        szamla_szam = parse_invoice_no(text)
+        szamla_datum = parse_invoice_date(text)
+        data = parse_text(text)
+
+        pdf_qty, pdf_amount, pdf_brutto = parse_total_row(text)
+
+        extracted_qty = sum(hu_to_float(row[2]) or 0 for row in data)
+        extracted_amount = sum(hu_to_float(row[5]) or 0 for row in data)
+        extracted_brutto = sum(hu_to_float(row[8]) or 0 for row in data)
+
+        all_ok = (
+            close_enough(pdf_qty, extracted_qty)
+            and close_enough(pdf_amount, extracted_amount)
+            and close_enough(pdf_brutto, extracted_brutto)
+        )
+
+        if not all_ok:
+            return [], f"{pdf_name}: eltérés az ellenőrzésben"
+
+        output_rows = []
+
+        for row in data:
+            output_rows.append((
+                pdf_name,
+                szamla_szam,
+                szamla_datum,
+                row[0],
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                row[5],
+                row[6],
+                row[7],
+                row[8],
+            ))
+
+        return output_rows, None
+
+    except Exception as error:
+        return [], f"{pdf_name}: {error}"
+
+    finally:
+        if doc_id:
+            delete_file(service, doc_id)
 
 @app.post("/parse")
-async def parse_pdf(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Csak PDF fájl tölthető fel.")
+async def parse_zip(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Csak ZIP fájl tölthető fel.")
 
     safe_name = file.filename.replace("/", "_").replace("\\", "_")
-    pdf_path = os.path.join(TEMP_DIR, f"{uuid.uuid4()}_{safe_name}")
+    job_id = str(uuid.uuid4())
+
+    zip_path = os.path.join(TEMP_DIR, f"{job_id}_{safe_name}")
+    extract_dir = os.path.join(TEMP_DIR, f"job_{job_id}")
+
+    os.makedirs(extract_dir, exist_ok=True)
 
     try:
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Üres fájl érkezett.")
 
-        with open(pdf_path, "wb") as f:
-            f.write(content)
+        with open(zip_path, "wb") as f:
+          f.write(content)
+
+          if not zipfile.is_zipfile(zip_path):
+            raise HTTPException(
+                status_code=400,
+                detail="A feltöltött fájl nem érvényes ZIP."
+            )
+
+        extract_root = os.path.abspath(extract_dir)
+
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            for member in archive.infolist():
+                target_path = os.path.abspath(
+                    os.path.join(extract_root, member.filename)
+                )
+
+                if os.path.commonpath([extract_root, target_path]) != extract_root:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="A ZIP nem biztonságos fájlnevet tartalmaz."
+                    )
+
+            archive.extractall(extract_root)
+
+            pdf_files = []
+
+            for root, _, files in os.walk(extract_dir):
+                for filename in files:
+                    if filename.lower().endswith(".pdf"):
+                        pdf_files.append(os.path.join(root, filename))
+
+            pdf_files.sort()
+
+            if not pdf_files:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A ZIP nem tartalmaz PDF fájlt."
+                )
 
         service = authenticate()
-        doc_id = pdf_to_google_doc(service, pdf_path, doc_name=safe_name)
+        all_output_rows = []
+        failed_files = []
+
+        for pdf_path in pdf_files:
+            output_rows, error = process_one_pdf(service, pdf_path)
+
+            if error:
+                failed_files.append(error)
+            else:
+                all_output_rows.extend(output_rows)
+
+        if failed_files:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Nem sikerült minden PDF feldolgozása: "
+                    + " | ".join(failed_files)
+                ),
+            )
+
+        if not all_output_rows:
+            raise HTTPException(
+                status_code=422,
+                detail="A PDF-ekből nem sikerült feldolgozható tételt kinyerni.",
+            )
+
+        output_file = os.path.join(
+            TEMP_DIR,
+            f"osszesitett_{job_id}.xlsx",
+        )
+
+        save_summary_excel(all_output_rows, output_file)
+
+        return FileResponse(
+            output_file,
+            filename="osszesitett_tetelek.xlsx",
+            media_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+        )
 
         try:
             text = get_doc_text(service, doc_id)
@@ -382,7 +533,11 @@ async def parse_pdf(file: UploadFile = File(...)):
 
     finally:
         try:
-            if os.path.exists(pdf_path):
-                os.remove(pdf_path)
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+
+            if os.path.isdir(extract_dir):
+                shutil.rmtree(extract_dir)
+
         except Exception:
             pass
