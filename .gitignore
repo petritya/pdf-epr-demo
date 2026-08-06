@@ -12,3 +12,12 @@ temp/
 token.json
 client_secret.json
 *.b64.txt
+
+# Helyi bemeneti és eredményfájlok
+input/
+output/
+hibas_output/
+txt_debug/
+ellenorzes.xlsx
+*.pdf
+*.zip
