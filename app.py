@@ -12,19 +12,13 @@ from openpyxl.utils import get_column_letter
 
 from pdf_batch_osszesito import (
     parse_text,
-    save_summary_excel,
     parse_invoice_no,
     parse_invoice_date,
     parse_total_row,
     hu_to_float,
     close_enough,
-)
-
-from drive_utils import (
-    authenticate,
-    pdf_to_google_doc,
-    get_doc_text,
-    delete_file,
+    get_pdf_text,
+    save_kulcs_csv,
 )
 
 app = FastAPI()
@@ -107,8 +101,8 @@ def home():
 
       <div class="row">
         <div class="file">
-          <input id="pdf" type="file" accept="application/pdf" />
-          <div class="footer">Kérlek PDF fájlt tölts fel.</div>
+            <input id="pdf" type="file" accept=".zip,application/zip" />
+            <div class="footer">Kérlek ZIP fájlt tölts fel.</div>
         </div>
         <button id="btn">Feldolgozás & letöltés</button>
       </div>
@@ -118,82 +112,104 @@ def home():
   </div>
 
 <script>
-  const input = document.getElementById("pdf");
-  const btn = document.getElementById("btn");
-  const statusBox = document.getElementById("status");
+    const input = document.getElementById("pdf");
+    const btn = document.getElementById("btn");
+    const statusBox = document.getElementById("status");
 
-  function setStatus(type, text) {
-    statusBox.className = "status " + type;
-    statusBox.style.display = "block";
-    statusBox.innerHTML = text;
-  }
+    function setStatus(type, text) {
+        statusBox.className = "status " + type;
+        statusBox.style.display = "block";
+        statusBox.innerHTML = text;
+    }
 
-  function clearStatus() {
-    statusBox.className = "status";
-    statusBox.style.display = "none";
-    statusBox.innerHTML = "";
-  }
+    function clearStatus() {
+        statusBox.className = "status";
+        statusBox.style.display = "none";
+        statusBox.innerHTML = "";
+    }
 
-  btn.addEventListener("click", async () => {
+    btn.addEventListener("click", async () => {
     clearStatus();
 
     const file = input.files?.[0];
+
     if (!file) {
-      setStatus("err", "Kérlek válassz ki egy PDF fájlt.");
-      return;
+        setStatus("err", "Kérlek válassz ki egy ZIP fájlt.");
+        return;
     }
 
-    if (file.type !== "application/pdf") {
-      setStatus("err", "Ez nem PDF fájlnak tűnik. Kérlek PDF-et tölts fel.");
-      return;
+    const isZip =
+        file.name.toLowerCase().endsWith(".zip") ||
+        file.type === "application/zip" ||
+        file.type === "application/x-zip-compressed";
+
+    if (!isZip) {
+        setStatus("err", "Ez nem ZIP fájlnak tűnik. Kérlek ZIP-et tölts fel.");
+        return;
     }
 
     btn.disabled = true;
-    setStatus("ok", `<span class="spinner"></span>Feldolgozás folyamatban...`);
+    setStatus(
+        "ok",
+        `<span class="spinner"></span>Feldolgozás folyamatban...`
+    );
 
     try {
-      const fd = new FormData();
-      fd.append("file", file);
+        const fd = new FormData();
+        fd.append("file", file);
 
-      const res = await fetch("/parse", {
+        const res = await fetch("/parse", {
         method: "POST",
         body: fd
-      });
+        });
 
-      if (!res.ok) {
+        if (!res.ok) {
         let msg = "Hiba történt a feldolgozás közben.";
+
         try {
-          const j = await res.json();
-          if (j?.detail) {
-            msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
-          }
+            const j = await res.json();
+
+            if (j?.detail) {
+            msg =
+                typeof j.detail === "string"
+                ? j.detail
+                : JSON.stringify(j.detail);
+            }
         } catch {}
+
         throw new Error(msg);
-      }
+        }
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
 
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "adatok.xlsx";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "kulcs_bejovo_szamlak.csv";
 
-      URL.revokeObjectURL(url);
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
 
-      setStatus("ok", "Kész! Az Excel letöltése elindult. ✅");
+        URL.revokeObjectURL(url);
 
-      setTimeout(() => {
+        setStatus(
+        "ok",
+        "Kész! A Kulcs-Ügyvitel importfájl letöltése elindult. ✅"
+        );
+
+        setTimeout(() => {
         input.value = "";
         clearStatus();
-      }, 1200);
+        }, 1200);
 
     } catch (e) {
-      setStatus("err", "❌ " + (e?.message || "Ismeretlen hiba."));
+        setStatus(
+        "err",
+        "❌ " + (e?.message || "Ismeretlen hiba.")
+        );
     } finally {
-      btn.disabled = false;
+        btn.disabled = false;
     }
   });
 </script>
@@ -367,7 +383,10 @@ def process_one_pdf(service, pdf_path):
 @app.post("/parse")
 async def parse_zip(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Csak ZIP fájl tölthető fel.")
+        raise HTTPException(
+            status_code=400,
+            detail="Csak ZIP fájl tölthető fel."
+        )
 
     safe_name = file.filename.replace("/", "_").replace("\\", "_")
     job_id = str(uuid.uuid4())
@@ -379,13 +398,17 @@ async def parse_zip(file: UploadFile = File(...)):
 
     try:
         content = await file.read()
+
         if not content:
-            raise HTTPException(status_code=400, detail="Üres fájl érkezett.")
+            raise HTTPException(
+                status_code=400,
+                detail="Üres fájl érkezett."
+            )
 
         with open(zip_path, "wb") as f:
-          f.write(content)
+            f.write(content)
 
-          if not zipfile.is_zipfile(zip_path):
+        if not zipfile.is_zipfile(zip_path):
             raise HTTPException(
                 status_code=400,
                 detail="A feltöltött fájl nem érvényes ZIP."
@@ -399,7 +422,9 @@ async def parse_zip(file: UploadFile = File(...)):
                     os.path.join(extract_root, member.filename)
                 )
 
-                if os.path.commonpath([extract_root, target_path]) != extract_root:
+                if os.path.commonpath(
+                    [extract_root, target_path]
+                ) != extract_root:
                     raise HTTPException(
                         status_code=400,
                         detail="A ZIP nem biztonságos fájlnevet tartalmaz."
@@ -407,32 +432,107 @@ async def parse_zip(file: UploadFile = File(...)):
 
             archive.extractall(extract_root)
 
-            pdf_files = []
+        pdf_files = []
 
-            for root, _, files in os.walk(extract_dir):
-                for filename in files:
-                    if filename.lower().endswith(".pdf"):
-                        pdf_files.append(os.path.join(root, filename))
+        for root, _, files in os.walk(extract_dir):
+            for filename in files:
+                if filename.lower().endswith(".pdf"):
+                    pdf_files.append(
+                        os.path.join(root, filename)
+                    )
 
-            pdf_files.sort()
+        pdf_files.sort()
 
-            if not pdf_files:
-                raise HTTPException(
-                    status_code=400,
-                    detail="A ZIP nem tartalmaz PDF fájlt."
-                )
+        if not pdf_files:
+            raise HTTPException(
+                status_code=400,
+                detail="A ZIP nem tartalmaz PDF fájlt."
+            )
 
-        service = authenticate()
         all_output_rows = []
         failed_files = []
 
         for pdf_path in pdf_files:
-            output_rows, error = process_one_pdf(service, pdf_path)
+            try:
+                text = get_pdf_text(pdf_path)
 
-            if error:
-                failed_files.append(error)
-            else:
+                szamla_szam = parse_invoice_no(text)
+                szamla_datum = parse_invoice_date(text)
+                data = parse_text(text)
+
+                output_rows = []
+
+                for row in data:
+                    output_rows.append((
+                        os.path.basename(pdf_path),
+                        szamla_szam,
+                        szamla_datum,
+                        row[0],
+                        row[1],
+                        row[2],
+                        row[3],
+                        row[4],
+                        row[5],
+                        row[6],
+                        row[7],
+                        row[8],
+                    ))
+
+                # Ellenőrzés
+                pdf_qty, pdf_amount, pdf_brutto = parse_total_row(text)
+
+                extracted_qty = sum(
+                    hu_to_float(r[2]) or 0
+                    for r in data
+                )
+
+                extracted_amount = sum(
+                    hu_to_float(r[5]) or 0
+                    for r in data
+                )
+
+                extracted_brutto = sum(
+                    hu_to_float(r[8]) or 0
+                    for r in data
+                )
+
+                qty_ok = close_enough(
+                    pdf_qty,
+                    extracted_qty
+                )
+
+                amount_ok = close_enough(
+                    pdf_amount,
+                    extracted_amount
+                )
+
+                brutto_ok = close_enough(
+                    pdf_brutto,
+                    extracted_brutto
+                )
+
+                if not (qty_ok and amount_ok and brutto_ok):
+                    failed_files.append(
+                        os.path.basename(pdf_path)
+                        + " - eltérés az ellenőrzésben"
+                    )
+                    continue
+
+                if not output_rows:
+                    failed_files.append(
+                        os.path.basename(pdf_path)
+                        + " - nem található feldolgozható tétel"
+                    )
+                    continue
+
                 all_output_rows.extend(output_rows)
+
+            except Exception as e:
+                failed_files.append(
+                    os.path.basename(pdf_path)
+                    + " - "
+                    + str(e)
+                )
 
         if failed_files:
             raise HTTPException(
@@ -446,90 +546,27 @@ async def parse_zip(file: UploadFile = File(...)):
         if not all_output_rows:
             raise HTTPException(
                 status_code=422,
-                detail="A PDF-ekből nem sikerült feldolgozható tételt kinyerni.",
+                detail=(
+                    "A PDF-ekből nem sikerült "
+                    "feldolgozható tételt kinyerni."
+                ),
             )
 
         output_file = os.path.join(
             TEMP_DIR,
-            f"osszesitett_{job_id}.xlsx",
+            f"kulcs_bejovo_szamlak_{job_id}.csv",
         )
 
-        save_summary_excel(all_output_rows, output_file)
+        save_kulcs_csv(
+            all_output_rows,
+            output_file
+        )
 
         return FileResponse(
             output_file,
-            filename="osszesitett_tetelek.xlsx",
-            media_type=(
-                "application/vnd.openxmlformats-officedocument."
-                "spreadsheetml.sheet"
-            ),
+            filename="kulcs_bejovo_szamlak.csv",
+            media_type="text/csv; charset=utf-8",
         )
-
-        try:
-            text = get_doc_text(service, doc_id)
-            data = parse_text(text)
-
-            output_file = os.path.join(TEMP_DIR, f"output_{uuid.uuid4()}.xlsx")
-
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Termékek"
-
-            ws.append([
-                "Terméknév",
-                "Cikkszám",
-                "Mennyiség",
-                "Szállító országa",
-                "Gyártó",
-                "Nettó ár",
-                "Valuta",
-                "Bruttó súly",
-                "Bruttó tömeg"
-            ])
-
-            for row in data:
-                row = list(row)
-
-                # Számoszlopok konvertálása
-                # indexek:
-                # 0 Terméknév
-                # 1 Cikkszám
-                # 2 Mennyiség
-                # 3 Szállító országa
-                # 4 Gyártó
-                # 5 Nettó ár
-                # 6 Valuta
-                # 7 Bruttó súly
-                # 8 Bruttó tömeg
-                row[2] = parse_hu_number(row[2])
-                row[5] = parse_hu_number(row[5])
-                row[7] = parse_hu_number(row[7])
-                row[8] = parse_hu_number(row[8])
-
-                ws.append(row)
-
-            # Számformátumok
-            for row_idx in range(2, ws.max_row + 1):
-                ws.cell(row=row_idx, column=3).number_format = '0.00'
-                ws.cell(row=row_idx, column=6).number_format = '#,##0.00'
-                ws.cell(row=row_idx, column=8).number_format = '0.00'
-                ws.cell(row=row_idx, column=9).number_format = '0.00'
-
-            format_worksheet(ws)
-
-            wb.save(output_file)
-
-            return FileResponse(
-                output_file,
-                filename="adatok.xlsx",
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-        finally:
-            try:
-                delete_file(service, doc_id)
-            except Exception:
-                pass
 
     finally:
         try:

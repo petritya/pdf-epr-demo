@@ -1,6 +1,8 @@
 import os
 import re
 import pickle
+import csv
+from pypdf import PdfReader
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -32,6 +34,22 @@ TOKEN_FILE = "token.json"
 CLIENT_SECRET_FILE = "client_secret.json"
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+KULCS_OUTPUT_FILE = "kulcs_bejovo_szamlak.csv"
+
+# Demó / ügyfélspecifikus Kulcs-Ügyvitel törzsadatok
+KULCS_PARTNER_KOD = "MPX001"
+KULCS_PARTNER_NEV = "MOTORPART X POLSKA Sp. z o.o."
+KULCS_IRANYITOSZAM = "40-001"
+KULCS_VAROS = "Katowice"
+KULCS_UTCA = "Przemysłowa"
+KULCS_KOZTERULET = "ul."
+KULCS_HAZSZAM = "18"
+KULCS_FIZETESI_MOD = "Banki átutalás"
+KULCS_AFA_KULCS = "27%"
+KULCS_MENNYISEGI_EGYSEG = "db"
+KULCS_PENZNEM = "HUF"
+KULCS_ARFOLYAM = 1
 # =========================
 
 
@@ -104,6 +122,22 @@ def delete_file(service, file_id):
     except Exception:
         pass
 
+# -------------------------
+# PDF -> TXT közvetlenül
+# -------------------------
+
+def get_pdf_text(pdf_path):
+    reader = PdfReader(pdf_path)
+
+    text_parts = []
+
+    for page in reader.pages:
+        text = page.extract_text()
+
+        if text:
+            text_parts.append(text)
+
+    return "\n".join(text_parts)
 
 # -------------------------
 # Alap segédek
@@ -181,32 +215,50 @@ def save_txt_debug(pdf_name: str, text: str):
 
 
 def parse_invoice_no(text):
-    m = re.search(r"ÁFA számla:\s*([A-Z0-9/-]+)", text)
-    return m.group(1).strip() if m else ""
-
-
-def parse_invoice_date(text):
-    m = re.search(r"Számla dátuma:\s*(\d{4}-\d{2}-\d{2})", text)
-    return m.group(1).strip() if m else ""
-
-
-def parse_total_row(text: str):
-    text = normalize_text(text)
-
     m = re.search(
-        r"Teljes\s+(-?\d+,\d{2})\s+(-?[\d ]+,\d{2})\s+:?Bruttó tömeg\s+(-?\d+,\d{2})",
+        r"\b[A-Z0-9]+/\d{4}/\d{2}/\d{3}\b",
         text
     )
 
-    if not m:
-        return None, None, None
+    return m.group(0) if m else ""
 
-    total_qty = hu_to_float(m.group(1))
-    total_amount = hu_to_float(m.group(2))
-    total_brutto = hu_to_float(m.group(3))
+def parse_invoice_date(text):
+    m = re.search(
+        r"Kiállítás:\s*(\d{4}-\d{2}-\d{2})",
+        text
+    )
 
-    return total_qty, total_amount, total_brutto
+    if m:
+        return m.group(1)
 
+    # tartalék megoldás
+    m = re.search(
+        r"\b(\d{4}-\d{2}-\d{2})\b",
+        text
+    )
+
+    return m.group(1) if m else ""
+
+def parse_total_row(text: str):
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    for i, line in enumerate(lines):
+
+        if line == "Teljes" and i + 4 < len(lines):
+
+            if lines[i + 3] == "Bruttó tömeg":
+
+                try:
+                    total_qty = hu_to_float(lines[i + 1])
+                    total_amount = hu_to_float(lines[i + 2])
+                    total_brutto = hu_to_float(lines[i + 4])
+
+                    return total_qty, total_amount, total_brutto
+
+                except Exception:
+                    pass
+
+    return None, None, None
 
 def close_enough(a, b, tolerance=0.02):
     if a is None or b is None:
@@ -354,43 +406,56 @@ def prepare_body(text: str):
 
 
 def parse_text(text: str):
-    body = prepare_body(text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
     results = []
-
-    # Szándékosan nincs lookahead a végén.
-    # Minden önmagában teljes tételt keresünk.
-    pattern = re.finditer(
-        r"(?P<prefix>.+?)\s*"
-        r"(?P<egyseg>SZT|szt|KPL|kpl)\s+"
-        r"(?P<mennyiseg>-?\d+,\d{2})\s+"
-        r"(?P<orszag>[A-Z]{2})\s+"
-        r"(?P<gyarto>.+?)\s+"
-        r"(?P<ar>-?[\d ]+,\d{2})\s+"
-        r"(?P<valuta>[A-Z]{3})\s+"
-        r"(?P<brutto_suly>-?\d+,\d{2})\s+"
-        r"(?P<brutto_tomeg>-?\d+,\d{2})",
-        body,
-        flags=re.DOTALL
-    )
-
     seen = set()
 
-    for match in pattern:
-        prefix = match.group("prefix").strip()
-        mennyiseg = match.group("mennyiseg").strip()
-        orszag = match.group("orszag").strip()
-        gyarto = match.group("gyarto").strip()
-        netto_ar = match.group("ar").strip().replace(" ", "")
-        valuta = match.group("valuta").strip()
-        brutto_suly = match.group("brutto_suly").strip()
-        brutto_tomeg = match.group("brutto_tomeg").strip()
+    units = {"SZT", "KPL"}
 
-        termeknev, cikkszam = split_name_and_code(prefix)
+    number_pattern = re.compile(r"^-?\d+,\d{2}$")
+    amount_pattern = re.compile(r"^-?[\d ]+,\d{2}$")
 
-        if not cikkszam:
+    for i, line in enumerate(lines):
+
+        if line.upper() not in units:
             continue
 
-        # 0,00-s ismétlődő korrekciós sorok kiszűrése
+        # Kell 2 sor előtte és 7 sor utána
+        if i < 2 or i + 7 >= len(lines):
+            continue
+
+        termeknev = lines[i - 2]
+        cikkszam = lines[i - 1]
+
+        mennyiseg = lines[i + 1]
+        orszag = lines[i + 2]
+        gyarto = lines[i + 3]
+        netto_ar = lines[i + 4].replace(" ", "")
+        valuta = lines[i + 5]
+        brutto_suly = lines[i + 6]
+        brutto_tomeg = lines[i + 7]
+
+        # Ellenőrzések, hogy tényleg tételsort találtunk
+        if not number_pattern.match(mennyiseg):
+            continue
+
+        if not re.fullmatch(r"[A-Z]{2}", orszag):
+            continue
+
+        if not amount_pattern.match(lines[i + 4]):
+            continue
+
+        if not re.fullmatch(r"[A-Z]{3}", valuta):
+            continue
+
+        if not number_pattern.match(brutto_suly):
+            continue
+
+        if not number_pattern.match(brutto_tomeg):
+            continue
+
+        # 0 értékű korrekciós sorok kihagyása
         if netto_ar in ("0,00", "-0,00"):
             continue
 
@@ -413,7 +478,6 @@ def parse_text(text: str):
         results.append(row)
 
     return results
-
 
 # -------------------------
 # Excel mentés
@@ -510,6 +574,147 @@ def save_summary_excel(rows, output_path):
 
     wb.save(output_path)
 
+def kulcs_decimal(value):
+    if value is None:
+        return ""
+
+    return f"{value:.4f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def kulcs_date(value):
+    if not value:
+        return ""
+
+    # 2026-07-01 -> 2026.07.01
+    return value.replace("-", ".")
+
+
+def save_kulcs_csv(rows, output_path):
+    headers = [
+        "Sorszám",
+        "Pénznem",
+        "Árfolyam",
+        "Ügyfél kód",
+        "Ügyfél Név",
+        "Irányítószám",
+        "Város",
+        "Utca",
+        "Adószám",
+        "Fizetési mód",
+        "Kelt",
+        "Teljesítés",
+        "Esedékesség",
+        "Terméknév",
+        "Mennyiség",
+        "Mennyiségi egység",
+        "Egységár",
+        "Megjegyzés",
+        "Áfa kulcs",
+        "Munkaszám",
+        "Részlegszám",
+        "Számla megjegyzés",
+        "TERMEKKOD",
+        "Bizonylatszám",
+        "Elszámoló időszak  záró dátuma",
+        "Áfa árfolyam",
+        "Termék megjelenített név",
+        "Kedvezmény",
+        "Ország",
+        "Közterület",
+        "Ajtó",
+        "Épület",
+        "Emelet",
+        "Lépcsőház",
+        "Házszám",
+        "Magánszemély",
+        "Magyar illetőség",
+        "Adóalanynak nem minősülő gazdasági szervezet",
+        "Köz. kívüli adósz.",
+        "EU adószám "
+    ]
+
+    invoice_numbers = {}
+    next_number = 1
+
+    with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(
+            f,
+            delimiter=";",
+            quoting=csv.QUOTE_MINIMAL
+        )
+
+        writer.writerow(headers)
+
+        for row in rows:
+            (
+                forras_fajl,
+                szamla_szam,
+                szamla_datum,
+                termeknev,
+                cikkszam,
+                mennyiseg,
+                szallito_orszaga,
+                gyarto,
+                tetel_osszeg,
+                valuta,
+                brutto_suly,
+                brutto_tomeg,
+            ) = row
+
+            if szamla_szam not in invoice_numbers:
+                invoice_numbers[szamla_szam] = next_number
+                next_number += 1
+
+            qty = hu_to_float(mennyiseg) or 0
+            amount = hu_to_float(tetel_osszeg) or 0
+
+            # A PDF-ben a tétel teljes összege szerepel,
+            # a Kulcs viszont nettó egységárat vár.
+            unit_price = amount / qty if qty else 0
+
+            writer.writerow([
+                invoice_numbers[szamla_szam],       # Sorszám
+                KULCS_PENZNEM,                      # Pénznem
+                kulcs_decimal(KULCS_ARFOLYAM),      # Árfolyam
+                KULCS_PARTNER_KOD,
+                KULCS_PARTNER_NEV,
+                KULCS_IRANYITOSZAM,
+                KULCS_VAROS,
+                KULCS_UTCA,
+                "",                                 # Adószám
+                KULCS_FIZETESI_MOD,
+                kulcs_date(szamla_datum),           # Kelt
+                kulcs_date(szamla_datum),           # Teljesítés
+                "",                                 # Esedékesség - később kiolvassuk
+                termeknev,
+                kulcs_decimal(qty),
+                KULCS_MENNYISEGI_EGYSEG,
+                kulcs_decimal(unit_price),
+                "",
+                KULCS_AFA_KULCS,
+                "",
+                "",
+                "",
+                cikkszam,                           # TERMEKKOD
+                szamla_szam,                        # Bizonylatszám
+                "",
+                "",
+                "",
+                "",
+                "Lengyelország",
+                KULCS_KOZTERULET,
+                "",
+                "",
+                "",
+                "",
+                KULCS_HAZSZAM,
+                0,
+                0,                                  # külföldi partner
+                0,
+                "",
+                ""
+            ])
+
 # -------------------------
 # Fő feldolgozás
 # -------------------------
@@ -544,11 +749,8 @@ def main():
     for pdf_file in pdf_files:
         print(f"Feldolgozás: {pdf_file.name}")
 
-        doc_id = None
-
         try:
-            doc_id = pdf_to_google_doc(service, str(pdf_file), pdf_file.stem)
-            text = get_doc_text(service, doc_id)
+            text = get_pdf_text(str(pdf_file))
 
             szamla_szam = parse_invoice_no(text)
             szamla_datum = parse_invoice_date(text)
@@ -655,11 +857,7 @@ def main():
                 str(e),
             ))
 
-        finally:
-            if doc_id:
-                delete_file(service, doc_id)
-
-    save_summary_excel(all_output_rows, SUMMARY_FILE)
+    save_kulcs_csv(all_output_rows, KULCS_OUTPUT_FILE)
     save_check_excel(check_rows, CHECK_FILE)
 
     print()
@@ -670,6 +868,7 @@ def main():
     print(f"Hibás Excel mappa: {BAD_OUTPUT_DIR}")
     print(f"Hibás TXT debug mappa: {TXT_DEBUG_DIR}")
     print(f"Ellenőrző fájl: {CHECK_FILE}")
+    print(f"Kulcs-Ügyvitel importfájl: {KULCS_OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
