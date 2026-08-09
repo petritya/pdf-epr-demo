@@ -14,6 +14,7 @@ from pdf_batch_osszesito import (
     parse_text,
     parse_invoice_no,
     parse_invoice_date,
+    parse_due_date,
     parse_total_row,
     hu_to_float,
     close_enough,
@@ -336,6 +337,7 @@ def process_one_pdf(service, pdf_path):
 
         szamla_szam = parse_invoice_no(text)
         szamla_datum = parse_invoice_date(text)
+        esedekesseg = parse_due_date(text)
         data = parse_text(text)
 
         pdf_qty, pdf_amount, pdf_brutto = parse_total_row(text)
@@ -458,6 +460,7 @@ async def parse_zip(file: UploadFile = File(...)):
 
                 szamla_szam = parse_invoice_no(text)
                 szamla_datum = parse_invoice_date(text)
+                esedekesseg = parse_due_date(text)
                 data = parse_text(text)
 
                 output_rows = []
@@ -467,6 +470,7 @@ async def parse_zip(file: UploadFile = File(...)):
                         os.path.basename(pdf_path),
                         szamla_szam,
                         szamla_datum,
+                        esedekesseg,
                         row[0],
                         row[1],
                         row[2],

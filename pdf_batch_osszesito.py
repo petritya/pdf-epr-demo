@@ -239,6 +239,27 @@ def parse_invoice_date(text):
 
     return m.group(1) if m else ""
 
+def parse_due_date(text):
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    for i, line in enumerate(lines):
+        if line.startswith("Fizetési határidő"):
+            dates = []
+
+            for candidate in lines[i + 1:i + 7]:
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", candidate):
+                    dates.append(candidate)
+
+            # A blokkban az első dátum a számla dátuma,
+            # a második a fizetési határidő.
+            if len(dates) >= 2:
+                return dates[1]
+
+            if dates:
+                return dates[-1]
+
+    return ""
+
 def parse_total_row(text: str):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
@@ -650,6 +671,7 @@ def save_kulcs_csv(rows, output_path):
                 forras_fajl,
                 szamla_szam,
                 szamla_datum,
+                esedekesseg,
                 termeknev,
                 cikkszam,
                 mennyiseg,
@@ -685,7 +707,7 @@ def save_kulcs_csv(rows, output_path):
                 KULCS_FIZETESI_MOD,
                 kulcs_date(szamla_datum),           # Kelt
                 kulcs_date(szamla_datum),           # Teljesítés
-                "",                                 # Esedékesség - később kiolvassuk
+                kulcs_date(esedekesseg),  # Esedékesség
                 termeknev,
                 kulcs_decimal(qty),
                 KULCS_MENNYISEGI_EGYSEG,
@@ -754,6 +776,7 @@ def main():
 
             szamla_szam = parse_invoice_no(text)
             szamla_datum = parse_invoice_date(text)
+            esedekesseg = parse_due_date(text)
             data = parse_text(text)
 
             output_rows = []
@@ -762,6 +785,7 @@ def main():
                     pdf_file.name,
                     szamla_szam,
                     szamla_datum,
+                    esedekesseg,
                     row[0],
                     row[1],
                     row[2],
