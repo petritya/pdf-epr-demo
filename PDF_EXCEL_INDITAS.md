@@ -7,7 +7,7 @@ A meglévő `app.py` és az éles indítás változatlan. Az új alkalmazás: `w
 - Több PDF vagy PDF-eket tartalmazó ZIP, legfeljebb 5 dokumentum / 10 oldal / 20 MB.
 - Általános, oldalankénti AI-adatkinyerés, külön táblázatok és nem táblázatos szöveg.
 - Dokumentumonként külön XLSX, több dokumentumnál ZIP letöltés.
-- Forrásfájl és oldalszám; bizonytalanságok munkalap; az eredeti számírásmód és kezdő nullák megőrzése szöveges cellákkal.
+- Forrásfájl és oldalszám; bizonytalanságok munkalap; egyértelmű mennyiségek és összegek számként; azonosítók és kezdő nullák szövegként.
 - Háttérfeldolgozás, állapotjelzés, kitalálhatatlan letöltési token.
 - Feltöltési és ZIP-korlátok, képletfuttatás kizárása Excel-cellákban.
 - Bemenetek csak feldolgozás alatt a memóriában; eredmény kb. 15 percig (30 másodperces takarítás). Multipart fogadásnál a keretrendszer átmeneti fájlt is használhat, amely a kérés lezárásakor törlődik.
@@ -38,7 +38,7 @@ pip install pytest
 pytest -q
 ```
 
-Nyolc teszt sikeres: XLSX-tartalom, vezető nullák, képletbiztonság, több PDF kimenete, ZIP-útvonal, oldallimit, sérült bemenet, konfigurációs tiltás és szimulált végponttól végpontig feldolgozás. A tesztek egy része több állítást ellenőriz.
+18 teszt sikeres: XLSX-tartalom, vezető nullák, képletbiztonság, több PDF kimenete, ZIP-útvonal, oldallimit, sérült bemenet, konfigurációs tiltás és szimulált végponttól végpontig feldolgozás. A tesztek egy része több állítást ellenőriz.
 
 Az AI-t a tesztekben helyettesítő függvény váltotta ki. Nem történt fizetős API-hívás, valódi OCR-minőségmérés vagy éles telepítés. A felületet HTTP-n ellenőriztük, böngészős vizuális teszt még nem történt.
 
@@ -54,3 +54,6 @@ Az AI-t a tesztekben helyettesítő függvény váltotta ki. Nem történt fizet
 ## Tudatos működési döntések
 
 Nincs ügyféloldali oszloplista vagy szabad szöveges feladatleírás. Nincs e-mail, importkonverzió vagy előfizetés ebben a változatban. Az új dokumentumfajtához nem kell egyedi parser. Az azonos című és azonos fejlécű táblákat a rendszer egy dokumentumon belül egyesíti, az eltérőeket külön lapra teszi. A teljes oldalankénti kontextus hiánya miatt többoldalas fejléc nélküli táblák külön lapra kerülhetnek. Az eredeti app érintetlen.
+
+## 2026-09-27 frissítés
+A feldolgozó az oldal renderelt PNG-képét küldi az AI-nak, így a rejtett szövegréteg nem írja felül a látható adatokat. A Tételek lap az első; a címkézett dokumentumadatok és összesítések külön Dokumentumadatok lapra kerülnek. Magyar figyelmeztetéseket kérünk. A kétértelmű számformátumok szövegként maradnak és figyelmeztetést kapnak. Valódi AI-val végzett regressziós ellenőrzés szükséges a telepítés után.

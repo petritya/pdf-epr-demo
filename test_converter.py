@@ -13,14 +13,14 @@ def pdf(n=1):
     out=io.BytesIO();writer.write(out);return out.getvalue()
 
 def sample(_):
-    return PageData(tables=[Table(title='Tételek',columns=['Kód','Érték'],rows=[['00123','=HYPERLINK("x")']])],other_text='Megjegyzés',warnings=['Olvasási bizonytalanság'])
+    return PageData(tables=[Table(title='Tételek',columns=['Kód','Érték'],rows=[['00123','=HYPERLINK("x")']],column_types=['text','text'],decimal_separator=',')],fields=[],other_text='Megjegyzés',warnings=['Olvasási bizonytalanság'])
 
 def test_xlsx_preserves_identifiers_and_disables_formulas():
     name,data,mime=convert(split_pages(collect_pdfs([('a.pdf',pdf())])),extractor=sample)
     wb=load_workbook(io.BytesIO(data))
     assert name=='01_a.xlsx'
-    assert wb['Táblázat_1']['C2'].value=='00123'
-    assert wb['Táblázat_1']['D2'].data_type=='s'
+    assert wb['Tételek']['C2'].value=='00123'
+    assert wb['Tételek']['D2'].data_type=='s'
     assert wb['Szöveg']['C2'].value=='Megjegyzés'
     assert wb['Ellenőrzések']['C3'].value=='Olvasási bizonytalanság'
 
@@ -70,3 +70,36 @@ def test_full_flow_with_fake_extractor(monkeypatch):
         assert c.get('/jobs/'+token+'/download').status_code==200
         assert 'data' not in s
         assert c.get('/jobs/unknown/download').status_code==404
+
+def test_typed_numbers_and_metadata():
+    from converter import DocumentField, make_workbook
+    page=PageData(tables=[Table(title='Tételek',columns=['Cikkszám','Mennyiség','Nettó összeg','Súly'],column_types=['text','number','number','number'],decimal_separator=',',rows=[['00123','2,00','15 740,00','0,96']])],fields=[DocumentField(label='Nettó összesen (HUF)',value='59 000,00',kind='number',decimal_separator=',')],other_text='',warnings=[])
+    wb=load_workbook(io.BytesIO(make_workbook('minta.pdf',[page])))
+    assert wb.sheetnames[0]=='Tételek'
+    assert wb['Tételek'].max_row==2
+    assert [wb['Tételek'].cell(2,i).value for i in range(3,7)]==['00123',2,15740,.96]
+    assert wb['Dokumentumadatok']['D2'].value==59000
+    assert wb['Dokumentumadatok']['E2'].value=='59 000,00'
+
+@pytest.mark.parametrize('raw,sep,expected', [('1.234,56',',',1234.56),('1,234.56','.',1234.56),('-2,48',',',-2.48),('00123',',',None),('1234567890123456',',',None),('1.23,4',',',None),('=1+1',',',None),('27%',',',None)])
+def test_numeric_parsing(raw,sep,expected):
+    from converter import numeric_value
+    result=numeric_value(raw,sep)
+    assert (result[0] if result else None)==expected
+
+def test_visible_image_input(monkeypatch):
+    import converter
+    monkeypatch.setenv('OPENAI_API_KEY','test')
+    captured={}
+    class Reply:
+        def raise_for_status(self): pass
+        def json(self):
+            return {'status':'completed','output':[{'content':[{'type':'output_text','text':sample(None).model_dump_json()}]}]}
+    def post(*args,**kwargs):
+        captured.update(kwargs['json']);return Reply()
+    monkeypatch.setattr(converter.httpx,'post',post)
+    converter.extract_page(pdf())
+    part=captured['input'][0]['content'][1]
+    assert part['type']=='input_image'
+    assert part['image_url'].startswith('data:image/png;base64,')
+    assert not captured['store']
