@@ -264,7 +264,12 @@ def make_workbook(name, pages):
                     set_numeric(ws.cell(ws.max_row, column), value, kind, table.decimal_separator, info, name, number)
         for field in page.fields:
             append_text(metadata, [name, number, field.label, field.value, field.value])
-            set_numeric(metadata.cell(metadata.max_row, 4), field.value, field.kind, field.decimal_separator, info, name, number)
+            value, kind = field.value, field.kind
+            currency = re.fullmatch(r'\s*(.+?)\s+(HUF|EUR|USD|PLN|GBP|CHF)\s*', value)
+            if currency and numeric_value(currency[1], field.decimal_separator) is not None:
+                value, kind = currency[1], 'number'
+                metadata.cell(metadata.max_row, 3).value = f'{field.label} ({currency[2]})'
+            set_numeric(metadata.cell(metadata.max_row, 4), value, kind, field.decimal_separator, info, name, number)
         for start in range(0, len(page.other_text), 30000):
             append_text(text_sheet, [name, number, page.other_text[start:start+30000]])
         for warning in page.warnings:

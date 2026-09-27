@@ -73,13 +73,13 @@ def test_full_flow_with_fake_extractor(monkeypatch):
 
 def test_typed_numbers_and_metadata():
     from converter import DocumentField, make_workbook
-    page=PageData(tables=[Table(title='Tételek',columns=['Cikkszám','Mennyiség','Nettó összeg','Súly'],column_types=['text','number','number','number'],decimal_separator=',',rows=[['00123','2,00','15 740,00','0,96']])],fields=[DocumentField(label='Nettó összesen (HUF)',value='59 000,00',kind='number',decimal_separator=',')],other_text='',warnings=[])
+    page=PageData(tables=[Table(title='Tételek',columns=['Cikkszám','Mennyiség','Nettó összeg','Súly'],column_types=['text','number','number','number'],decimal_separator=',',rows=[['00123','2,00','15 740,00','0,96']])],fields=[DocumentField(label='Nettó összesen (HUF)',value='59 000,00 HUF',kind='text',decimal_separator=',')],other_text='',warnings=[])
     wb=load_workbook(io.BytesIO(make_workbook('minta.pdf',[page])))
     assert wb.sheetnames[0]=='Tételek'
     assert wb['Tételek'].max_row==2
     assert [wb['Tételek'].cell(2,i).value for i in range(3,7)]==['00123',2,15740,.96]
     assert wb['Dokumentumadatok']['D2'].value==59000
-    assert wb['Dokumentumadatok']['E2'].value=='59 000,00'
+    assert wb['Dokumentumadatok']['E2'].value=='59 000,00 HUF'
 
 @pytest.mark.parametrize('raw,sep,expected', [('1.234,56',',',1234.56),('1,234.56','.',1234.56),('-2,48',',',-2.48),('00123',',',None),('1234567890123456',',',None),('1.23,4',',',None),('=1+1',',',None),('27%',',',None)])
 def test_numeric_parsing(raw,sep,expected):
