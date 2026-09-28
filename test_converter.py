@@ -103,3 +103,28 @@ def test_visible_image_input(monkeypatch):
     assert part['type']=='input_image'
     assert part['image_url'].startswith('data:image/png;base64,')
     assert not captured['store']
+
+def test_overlapping_text_objects_remain_separate():
+    from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
+    from converter import native_text
+    import json
+    writer=PdfWriter();page=writer.add_blank_page(width=500,height=200)
+    font=DictionaryObject({NameObject('/Type'):NameObject('/Font'),NameObject('/Subtype'):NameObject('/Type1'),NameObject('/BaseFont'):NameObject('/Helvetica')})
+    page[NameObject('/Resources')]=DictionaryObject({NameObject('/Font'):DictionaryObject({NameObject('/F1'):writer._add_object(font)})})
+    stream=DecodedStreamObject()
+    stream.set_data(b'BT /F1 10 Tf 1 0 0 1 10 100 Tm (A very long description overlapping code) Tj ET BT /F1 10 Tf 1 0 0 1 150 100 Tm (001-AB) Tj ET')
+    page[NameObject('/Contents')]=writer._add_object(stream)
+    out=io.BytesIO();writer.write(out)
+    spans=json.loads(native_text(out.getvalue()))
+    assert [s[2] for s in spans]==['A very long description overlapping code','001-AB']
+    assert spans[0][0]<spans[1][0]
+
+def test_document_rejects_missing_output_page(monkeypatch):
+    import converter
+    monkeypatch.setenv('OPENAI_API_KEY','test')
+    class Reply:
+        def raise_for_status(self):pass
+        def json(self):return {'status':'completed','output':[{'content':[{'type':'output_text','text':converter.DocumentData(pages=[sample(None)]).model_dump_json()}]}]}
+    monkeypatch.setattr(converter.httpx,'post',lambda *a,**k:Reply())
+    with pytest.raises(RuntimeError,match='Nem minden oldal'):
+        converter.extract_document([pdf(),pdf()])
