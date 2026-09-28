@@ -5,7 +5,7 @@ A meglévő `app.py` és az éles indítás változatlan. Az új alkalmazás: `w
 ## Elkészült
 
 - Több PDF vagy PDF-eket tartalmazó ZIP, legfeljebb 5 dokumentum / 10 oldal / 20 MB.
-- Általános, oldalankénti AI-adatkinyerés, külön táblázatok és nem táblázatos szöveg.
+- Általános, dokumentumonkénti AI-adatkinyerés, külön táblázatok és nem táblázatos szöveg.
 - Dokumentumonként külön XLSX, több dokumentumnál ZIP letöltés.
 - Forrásfájl és oldalszám; bizonytalanságok munkalap; egyértelmű mennyiségek és összegek számként; azonosítók és kezdő nullák szövegként.
 - Háttérfeldolgozás, állapotjelzés, kitalálhatatlan letöltési token.
@@ -25,7 +25,7 @@ uvicorn webapp:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log
 Szerveroldali változók:
 
 - OPENAI_API_KEY: a saját OpenAI projekt API-kulcsa, titkos változóként.
-- OPENAI_MODEL: alapértelmezett tesztjelölt gpt-5.4-mini; valódi mintákon még nem validált.
+- OPENAI_MODEL: alapértelmezés gpt-5.4, medium reasoning; a kisebb modellnél magasabb feldolgozási költség várható.
 - PRIVACY_URL: a végleges, ehhez a szolgáltatáshoz igazított HTTPS adatkezelési tájékoztató URL-je.
 - PILOT_MAX_JOBS: alapértelmezetten 20 indítás folyamatonként.
 
@@ -38,7 +38,7 @@ pip install pytest
 pytest -q
 ```
 
-18 teszt sikeres: XLSX-tartalom, vezető nullák, képletbiztonság, több PDF kimenete, ZIP-útvonal, oldallimit, sérült bemenet, konfigurációs tiltás és szimulált végponttól végpontig feldolgozás. A tesztek egy része több állítást ellenőriz.
+20 teszt sikeres: XLSX-tartalom, vezető nullák, képletbiztonság, több PDF kimenete, ZIP-útvonal, oldallimit, sérült bemenet, konfigurációs tiltás és szimulált végponttól végpontig feldolgozás. A tesztek egy része több állítást ellenőriz.
 
 Az AI-t a tesztekben helyettesítő függvény váltotta ki. Nem történt fizetős API-hívás, valódi OCR-minőségmérés vagy éles telepítés. A felületet HTTP-n ellenőriztük, böngészős vizuális teszt még nem történt.
 
@@ -53,7 +53,13 @@ Az AI-t a tesztekben helyettesítő függvény váltotta ki. Nem történt fizet
 
 ## Tudatos működési döntések
 
-Nincs ügyféloldali oszloplista vagy szabad szöveges feladatleírás. Nincs e-mail, importkonverzió vagy előfizetés ebben a változatban. Az új dokumentumfajtához nem kell egyedi parser. Az azonos című és azonos fejlécű táblákat a rendszer egy dokumentumon belül egyesíti, az eltérőeket külön lapra teszi. A teljes oldalankénti kontextus hiánya miatt többoldalas fejléc nélküli táblák külön lapra kerülhetnek. Az eredeti app érintetlen.
+Nincs ügyféloldali oszloplista vagy szabad szöveges feladatleírás. Nincs e-mail, importkonverzió vagy előfizetés ebben a változatban. Az új dokumentumfajtához nem kell egyedi parser. Az azonos fejlécű és oszloptípusú táblákat a rendszer egy dokumentumon belül egyesíti, az eltérőeket külön lapra teszi. A modell egy dokumentum összes oldalát egy kérésben látja; az eltérően felismert fejlécek továbbra is külön munkalaphoz vezethetnek. Az eredeti app érintetlen.
 
 ## 2026-09-27 frissítés
 A feldolgozó az oldal renderelt PNG-képét küldi az AI-nak, így a rejtett szövegréteg nem írja felül a látható adatokat. A Tételek lap az első; a címkézett dokumentumadatok és összesítések külön Dokumentumadatok lapra kerülnek. Magyar figyelmeztetéseket kérünk. A kétértelmű számformátumok szövegként maradnak és figyelmeztetést kapnak. Valódi AI-val végzett regressziós ellenőrzés szükséges a telepítés után.
+
+## 2026-09-28: hibrid feldolgozás
+
+Az oldalaképek mellett külön szövegobjektumok koordinátáit és pontos szövegét is elküldjük. Így az egymásra lógó megnevezés és cikkszám nem olvad össze már a bemenetben. A kép marad az elsődleges forrás a látható fejlécek és felülírt elemek eldöntéséhez. A szkennelt oldalaknál a képfeldolgozás működik szövegobjektumok nélkül is.
+
+A feldolgozás dokumentumonként halad; a felület oldalszámlálója ezért több oldallal is ugorhat. A válasz oldalszámát és táblázatszerkezetét a program ellenőrzi. Az összegellenőrzés jelenleg modellutasítás, nem független, determinisztikus garancia. A valós számlák tételszámát és számértékeit a fejlesztési tesztben külön összevetjük az eredeti PDF adataival.
