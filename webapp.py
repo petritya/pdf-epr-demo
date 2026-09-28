@@ -56,7 +56,7 @@ def home():
 
 @app.get('/config')
 def config():
-    return {'version': '2026-09-27-visual-v2', 'ready': ready(), 'privacy_url': os.getenv('PRIVACY_URL', '')}
+    return {'version': '2026-09-28-hybrid-v3', 'ready': ready(), 'privacy_url': os.getenv('PRIVACY_URL', '')}
 
 async def run_job(token, documents):
     try:

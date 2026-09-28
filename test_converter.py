@@ -94,12 +94,12 @@ def test_visible_image_input(monkeypatch):
     class Reply:
         def raise_for_status(self): pass
         def json(self):
-            return {'status':'completed','output':[{'content':[{'type':'output_text','text':sample(None).model_dump_json()}]}]}
+            return {'status':'completed','output':[{'content':[{'type':'output_text','text':converter.DocumentData(pages=[sample(None)]).model_dump_json()}]}]}
     def post(*args,**kwargs):
         captured.update(kwargs['json']);return Reply()
     monkeypatch.setattr(converter.httpx,'post',post)
     converter.extract_page(pdf())
-    part=captured['input'][0]['content'][1]
+    part=captured['input'][0]['content'][2]
     assert part['type']=='input_image'
     assert part['image_url'].startswith('data:image/png;base64,')
     assert not captured['store']
