@@ -24,10 +24,21 @@ def test_xlsx_preserves_identifiers_and_disables_formulas():
     assert wb['Szöveg']['C2'].value=='Megjegyzés'
     assert wb['Ellenőrzések']['C3'].value=='Olvasási bizonytalanság'
 
-def test_multiple_documents_distinct_outputs():
-    _,data,mime=convert(split_pages(collect_pdfs([('a.pdf',pdf()),('a.pdf',pdf())])),extractor=sample)
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        assert z.namelist()==['01_a.xlsx','02_a.xlsx']
+def test_multiple_documents_combined_with_sources():
+    name,data,mime=convert(split_pages(collect_pdfs([('a.pdf',pdf()),('b.pdf',pdf())])),extractor=sample)
+    wb=load_workbook(io.BytesIO(data))
+    assert name=='osszesitett.xlsx'
+    assert wb['Tételek'].max_row==3
+    assert [wb['Tételek'].cell(i,1).value for i in (2,3)]==['a.pdf','b.pdf']
+    assert [wb['Tételek'].cell(i,2).value for i in (2,3)]==['1','1']
+
+def test_different_structures_separate_sheets():
+    from converter import make_workbook
+    first=sample(None);second=sample(None)
+    second.tables[0].columns=['Más kód','Más érték']
+    wb=load_workbook(io.BytesIO(make_workbook('',[],documents=[('a.pdf',[first]),('b.pdf',[second])])))
+    assert wb['Tételek']['A2'].value=='a.pdf'
+    assert wb['Táblázat_2']['A2'].value=='b.pdf'
 
 def test_zip_traversal_rejected():
     out=io.BytesIO()

@@ -315,7 +315,7 @@ def set_numeric(cell, value, kind, separator, info, name, page):
     else:
         cell.value, cell.number_format = parsed
 
-def make_workbook(name, pages):
+def make_workbook(name, pages, documents=None):
     wb = Workbook()
     info = wb.active
     info.title = 'Ellenőrzések'
@@ -326,7 +326,9 @@ def make_workbook(name, pages):
     text_sheet = wb.create_sheet('Szöveg')
     append_text(text_sheet, ['Forrás', 'Oldal', 'Táblázaton kívüli szöveg'])
     sheets = {}
-    for number, page in enumerate(pages, 1):
+    records = [(source, number, page) for source, source_pages in (documents or [(name, pages)])
+               for number, page in enumerate(source_pages, 1)]
+    for name, number, page in records:
         for table in page.tables:
             signature = (tuple(table.columns), tuple(table.column_types))
             if signature not in sheets:
@@ -375,7 +377,7 @@ def make_workbook(name, pages):
 def convert(documents, extractor=extract_page, progress=lambda *_: None):
     total = sum(len(pages) for _, pages in documents)
     done = 0
-    files = []
+    extracted_documents = []
     for index, (name, pages) in enumerate(documents, 1):
         if extractor is extract_page:
             extracted = extract_document(pages)
@@ -387,12 +389,11 @@ def convert(documents, extractor=extract_page, progress=lambda *_: None):
                 extracted.append(extractor(data))
                 done += 1
                 progress(done, total)
+        extracted_documents.append((name, extracted))
+    if len(extracted_documents) == 1:
+        name, pages = extracted_documents[0]
         stem = re.sub(r'[^\w.-]', '_', PurePosixPath(name).stem)[:70] or 'dokumentum'
-        files.append((f'{index:02d}_{stem}.xlsx', make_workbook(name, extracted)))
-    if len(files) == 1:
-        return files[0][0], files[0][1], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as archive:
-        for name, data in files:
-            archive.writestr(name, data)
-    return 'excel_fajlok.zip', out.getvalue(), 'application/zip'
+        filename = f'01_{stem}.xlsx'
+    else:
+        filename = 'osszesitett.xlsx'
+    return filename, make_workbook('', [], documents=extracted_documents), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
