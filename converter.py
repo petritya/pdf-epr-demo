@@ -309,7 +309,11 @@ def numeric_value(value, separator):
 def set_numeric(cell, value, kind, separator, info, name, page):
     if kind != 'number' or not value.strip():
         return
-    parsed = numeric_value(value, separator)
+    suffix = re.fullmatch(r'\s*(.+?)\s*(Ft|HUF|EUR|USD|PLN|GBP|CHF|%)\s*', value)
+    parsed = numeric_value(suffix[1] if suffix else value, separator)
+    if parsed is not None and suffix:
+        number, fmt = parsed
+        parsed = (number / 100, '0.##%') if suffix[2] == '%' else (number, fmt + ' "' + suffix[2] + '"')
     if parsed is None:
         append_text(info, [name, page, f'{cell.parent.title}!{cell.coordinate}: bizonytalan számformátum, az eredeti szöveg megmaradt: {value}'])
     else:
@@ -330,7 +334,7 @@ def make_workbook(name, pages, documents=None):
                for number, page in enumerate(source_pages, 1)]
     for name, number, page in records:
         for table in page.tables:
-            signature = (tuple(table.columns), tuple(table.column_types))
+            signature = tuple(' '.join(c.split()).casefold() for c in table.columns)
             if signature not in sheets:
                 ws = wb.create_sheet('Tételek' if not sheets else f'Táblázat_{len(sheets)+1}')
                 append_text(ws, ['Forrás', 'Oldal', *table.columns])

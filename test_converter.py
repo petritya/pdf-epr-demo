@@ -139,3 +139,15 @@ def test_document_rejects_missing_output_page(monkeypatch):
     monkeypatch.setattr(converter.httpx,'post',lambda *a,**k:Reply())
     with pytest.raises(RuntimeError,match='Nem minden oldal'):
         converter.extract_document([pdf(),pdf()])
+
+
+def test_same_headers_merge_despite_model_type_difference():
+    from converter import make_workbook
+    a=sample(None);b=sample(None)
+    b.tables[0].column_types=['text','number']
+    b.tables[0].rows=[['00124','125,50 Ft']]
+    wb=load_workbook(io.BytesIO(make_workbook('',[],documents=[('a.pdf',[a]),('b.pdf',[b])])))
+    assert wb['Tételek'].max_row==3
+    assert 'Táblázat_2' not in wb.sheetnames
+    assert wb['Tételek']['D3'].value==125.5
+    assert 'Ft' in wb['Tételek']['D3'].number_format
